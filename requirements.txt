@@ -1,0 +1,14 @@
+# 🚀 Quantum Tic-Tac-Toe Required Packages
+# Run: pip install -r requirements.txt
+
+# 🔬 Quantum Computing Libraries
+qiskit>=0.45.0              # Main quantum computing framework
+qiskit-aer>=0.13.0           # Local quantum simulator backend  
+qiskit-ibm-provider>=0.7.0   # IBM Quantum hardware access
+qiskit-ibm-runtime>=0.15.0   # IBM Quantum runtime services
+
+# 🎨 Terminal Styling
+termcolor>=2.3.0             # Colored text output for the game board
+
+# 📦 Standard Libraries (usually included with Python)
+# json - for handling data structures (built-in)

@@ -1,7 +1,11 @@
-from termcolor import colored, cprint
-import json
-from qiskit import *
-from qiskit.tools.monitor import job_monitor
+# 🎨 Import libraries for our quantum simulation version
+from termcolor import colored, cprint  # Pretty colors for terminal output ✨
+import json  # For handling data structures 
+from qiskit import *  # Quantum computing library - the star of the show! 🌟
+# Note: job_monitor not needed for local simulation, removed deprecated import
+
+# 💡 KEY DIFFERENCE: This version uses a LOCAL SIMULATOR instead of real quantum hardware
+# Perfect for testing and learning without waiting for actual quantum computers!
 
 def resetBoard():
   return {'1': [' ', 0] , '2': [' ', 0], '3': [' ', 0],
@@ -114,17 +118,36 @@ def make_quantum_move(theBoard, count, circuit, turn):
   return theBoard, count, circuit, turn
 
 def measure(circuit, theBoard, count):
-  # trigger collapse
+  """
+  🎲 SIMULATION VERSION - Collapse the quantum superposition using local simulator
+  
+  This does the EXACT same thing as the IBM version, but instead of using a real
+  quantum computer that costs millions of dollars, we use a classical computer
+  to simulate what a quantum computer would do.
+  
+  Think of it like playing a racing video game vs. actually driving a race car -
+  same experience, way more accessible (and no risk of crashing)! 🏎️
+  
+  Args:
+    circuit: Our quantum circuit full of superposition magic
+    theBoard: Current game board state
+    count: How many pieces are on the board
+  """
+  
+  # Show the current state before the quantum collapse
   printBoard(theBoard)
   print()
-  print("Trigger collapse.")
+  print("Trigger collapse.")  # *dramatic quantum music*
   print()
 
-  # Use Aer's qasm_simulator
-  simulator = qiskit.Aer.get_backend('qasm_simulator')
+  # 🖥️ Use Qiskit's local quantum simulator instead of real quantum hardware
+  # This runs on your regular computer but simulates quantum behavior
+  from qiskit_aer import AerSimulator
+  simulator = AerSimulator()
 
-  circuit.measure(0,0)
-  circuit.measure(1,1)
+  # 📏 Add measurements to all 9 qubits (same as IBM version)
+  circuit.measure(0,0)  # Measure qubit 0, store in classical bit 0
+  circuit.measure(1,1)  # And so on for all positions...
   circuit.measure(2,2)
   circuit.measure(3,3)
   circuit.measure(4,4)
@@ -133,35 +156,38 @@ def measure(circuit, theBoard, count):
   circuit.measure(7,7)
   circuit.measure(8,8)
 
-  print(circuit.draw())
+  print(circuit.draw())  # Show the quantum circuit with measurements
 
-  # Execute the circuit on quantum simulator
-  job = qiskit.execute(circuit, simulator, shots=1)
+  # 🚀 Execute the circuit on the LOCAL simulator (much faster than real quantum!)
+  # shots=1 means we run the experiment once and get one result
+  job = simulator.run(circuit, shots=1)
 
-  # Grab results from the job
+  # 📊 Get the results from the simulation
   result = job.result()
 
-  out = json.dumps(result.get_counts()) #Converts the result.get_counts() into a string
-  string = out[2:11] #Removes unnecessary data from string, leaving us with board
+  # Convert the quantum results to something we can use
+  out = json.dumps(result.get_counts())  # Convert to JSON string
+  string = out[2:11]  # Extract just the 9-bit result (remove JSON formatting)
 
-  # update board
+  # 🎯 Update the game board based on simulation results
+  # Each bit tells us if that position should have a piece (1) or be empty (0)
   for i in range(9):
       if string[i] == '1':
-          # cement value in the board
-          theBoard[str(9-i)][1] = 0
+          # This position survives the collapse - make it solid
+          theBoard[str(9-i)][1] = 0  # Not quantum anymore
       else:
-          # make square empty
-          theBoard[str(9-i)][1] = 0
-          theBoard[str(9-i)][0] = ' '
+          # This position gets removed - clear the spot
+          theBoard[str(9-i)][1] = 0  # Not quantum anymore
+          theBoard[str(9-i)][0] = ' '  # Remove the symbol
 
-  # update count (total number of markers on the board)
+  # 🧮 Recount pieces on the board after collapse
   count = 0
   for i in range(9):
-      theBoard[str(i+1)][1] = 0
+      theBoard[str(i+1)][1] = 0  # Make sure everything is classical now
       if theBoard[str(i+1)][0] != ' ':
-          count += 1
+          count += 1  # Count non-empty spots
 
-  # reset qubits
+  # 🔄 Reset all qubits back to |0⟩ state for future moves
   circuit.reset(0)
   circuit.reset(1)
   circuit.reset(2)
@@ -172,10 +198,10 @@ def measure(circuit, theBoard, count):
   circuit.reset(7)
   circuit.reset(8)
 
+  # 🔧 Set up qubits to match the new board state
   for i in range(9):
-      if string[8-i] == '1':
-          # add pauli x gate
-          circuit.x(i)
+      if string[8-i] == '1':  # If this position has a piece
+          circuit.x(i)  # Set the corresponding qubit to |1⟩
 
   return circuit, string, theBoard, count
 
@@ -273,8 +299,10 @@ def game():
     x_collapse = 1
     y_collapse = 1
 
-    # initialise quantum circuit with 9 qubits (all on OFF = 0)
-    circuit = qiskit.QuantumCircuit(9, 9)
+    # 🔬 Initialize quantum circuit with 9 qubits (all start as |0⟩)
+    # and 9 classical bits (to store measurement results)
+    from qiskit import QuantumCircuit
+    circuit = QuantumCircuit(9, 9)
 
     while (not win):
 
@@ -396,10 +424,14 @@ def start_menu():
       
     return choice
 
-#Reset the board at start
+# 🚀 SIMULATION VERSION INITIALIZATION
+# This is exactly like the IBM version but runs locally on your computer!
+
+# Reset the board at start (create a fresh, empty board)
 theBoard = resetBoard()
 
-#Set no moves made yet
+# 🎮 Start the game if player chooses option 1  
+# The functions are identical to IBM.py - only the measurement backend is different!
 if (start_menu() == '1'):  
-  madeMove = False
-  game()
+  madeMove = False  # Track if a move was made this turn
+  game()  # LET THE SIMULATED QUANTUM CHAOS BEGIN! 🌪️

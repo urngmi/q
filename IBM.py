@@ -2,11 +2,53 @@
 from termcolor import colored, cprint  # Makes our terminal look pretty with colors 💅
 import json  # For handling data that looks like JavaScript objects
 from qiskit import *  # The main quantum computing library - this is where the magic happens ✨
-from qiskit.tools.monitor import job_monitor  # Watches our quantum jobs like a hawk 👀
+import time  # For simple job monitoring since qiskit.tools.monitor is deprecated
+
+# 🔧 Try to import IBM provider with fallback handling
+try:
+    from qiskit_ibm_provider import IBMProvider
+    IBM_PROVIDER_AVAILABLE = True
+    print("✅ IBM Provider loaded successfully!")
+except ImportError as e:
+    print(f"⚠️ IBM Provider not available: {e}")
+    print("🔄 Game will use local simulation only")
+    IBM_PROVIDER_AVAILABLE = False
+
+# 🔧 Simple job monitor function (since the old one is deprecated)
+def job_monitor(job):
+    """
+    🕐 Simple job monitoring function - watches our quantum job progress
+    
+    This replaces the deprecated qiskit.tools.monitor.job_monitor function.
+    It just waits for the job to complete and shows some progress dots.
+    """
+    print("⏳ Waiting for quantum job to complete", end="")
+    while job.status().name not in ['DONE', 'CANCELLED', 'ERROR']:
+        print(".", end="", flush=True)
+        time.sleep(1)
+    
+    status = job.status().name
+    if status == 'DONE':
+        print("\n✅ Quantum job completed successfully!")
+    elif status == 'CANCELLED':
+        print("\n❌ Quantum job was cancelled!")
+    else:
+        print(f"\n⚠️ Quantum job finished with status: {status}")
 
 # 🔑 Your secret key to access IBM's actual quantum computers (keep this private bestie!)
 TOKEN = "404713877cdee77e48a874066538a3cecab6e044ddbc06b7f25d4b2178a3b3c25151add0d8135bd8fed43867888555109239891a38555adeaef7f0342994b4fe"
-IBMQ.save_account(TOKEN)  # Save this token so we can connect to real quantum computers later
+
+# 💾 Save the IBM account token for later use (only if provider is available)
+if IBM_PROVIDER_AVAILABLE:
+    try:
+        IBMProvider.save_account(token=TOKEN, overwrite=True)
+        print("🔑 IBM account token saved successfully!")
+    except Exception as e:
+        print(f"⚠️ Note: {e}")
+        print("🔄 IBM connection may not work, will use simulator")
+        IBM_PROVIDER_AVAILABLE = False
+else:
+    print("💡 No worries! The game will work perfectly with local simulation")
 
 def resetBoard():
   """
@@ -204,9 +246,40 @@ def measure(circuit, theBoard, count):
   print()
 
   # 🔗 Connect to IBM's actual quantum computer (not a simulation!)
-  IBMQ.load_account()  # Use our saved account
-  provider = IBMQ.get_provider(hub = 'ibm-q')  # Get access to IBM's quantum computers
-  qcomp = provider.get_backend('ibmq_16_melbourne')  # Pick a specific quantum computer
+  if IBM_PROVIDER_AVAILABLE:
+    try:
+      # Load the IBM provider with the newer syntax
+      provider = IBMProvider()
+      
+      # Get available backends (quantum computers)
+      backends = provider.backends()
+      
+      # Try to get a working backend (newer Qiskit versions may have different backend names)
+      # Let's use a more general approach to find an available backend
+      available_backends = [backend.name for backend in backends if backend.simulator == False]
+      
+      if available_backends:
+        # Use the first available real quantum computer
+        backend_name = available_backends[0]
+        qcomp = provider.get_backend(backend_name)
+        print(f"🔬 Using quantum computer: {backend_name}")
+      else:
+        print("⚠️ No real quantum computers available, falling back to simulator")
+        # Fall back to simulator if no real hardware available
+        from qiskit_aer import AerSimulator
+        qcomp = AerSimulator()
+        
+    except Exception as e:
+      print(f"⚠️ IBM connection issue: {e}")
+      print("🔄 Falling back to local simulator")
+      # Use local simulator as backup
+      from qiskit_aer import AerSimulator
+      qcomp = AerSimulator()
+  else:
+    print("🔄 Using local simulator (IBM provider not available)")
+    # Use local simulator since IBM provider isn't available
+    from qiskit_aer import AerSimulator
+    qcomp = AerSimulator()
 
   # 📏 Add measurement to all 9 qubits
   # This is like asking "what's the final state of each position?"
@@ -223,9 +296,18 @@ def measure(circuit, theBoard, count):
 
   print(circuit.draw())  # Show the final circuit with measurements
 
-  # 🚀 Send our circuit to the REAL quantum computer and wait for results
+  # 🚀 Send our circuit to the quantum computer and wait for results
   # shots=1 means we only run this once (one measurement)
-  job = qiskit.execute(circuit, backend=qcomp, shots=1)
+  
+  # For real IBM quantum computers, we need to transpile first
+  if hasattr(qcomp, 'run'):
+    # Using newer Qiskit syntax
+    job = qcomp.run(circuit, shots=1)
+  else:
+    # Fallback for older syntax
+    from qiskit import transpile
+    transpiled_circuit = transpile(circuit, qcomp)
+    job = qcomp.run(transpiled_circuit, shots=1)
 
   job_monitor(job)  # Watch the job progress like watching a loading bar
 
@@ -274,18 +356,41 @@ def measure(circuit, theBoard, count):
   return circuit, string, theBoard, count
 
 def check_win(theBoard, turn):
-  if theBoard['7'][0] == theBoard['8'][0] == theBoard['9'][0] != ' ': # across the top
-      if theBoard['7'][1] == theBoard['8'][1] == theBoard['9'][1] == 0: # only cemented markers
+  """
+  🏆 Check if someone actually won this chaotic quantum game
+  
+  We check all the classic tic-tac-toe winning patterns:
+  - Three in a row horizontally, vertically, or diagonally
+  
+  BUT WAIT - there's a catch! We only count it as a win if all three pieces
+  are "classical" (not quantum). If any piece is still in quantum superposition,
+  it doesn't count as a real win yet.
+  
+  It's like saying "you only win if your pieces are actually there, not just
+  maybe there in some parallel universe"
+  
+  Args:
+    theBoard: Current game state
+    turn: Current player ('X' or 'O')
+    
+  Returns:
+    True if someone won, False if game continues
+  """
+  
+  # Check top row (positions 7, 8, 9)
+  if theBoard['7'][0] == theBoard['8'][0] == theBoard['9'][0] != ' ': # Same symbol across top
+      if theBoard['7'][1] == theBoard['8'][1] == theBoard['9'][1] == 0: # All pieces are classical (solid)
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
-          print(theBoard['8'][0], end='')
+          print(theBoard['8'][0], end='')  # Print the winning symbol
           print(" won ****")
           print() 
           return True
 
-  elif theBoard['4'][0] == theBoard['5'][0] == theBoard['6'][0] != ' ': # across the middle
-      if theBoard['4'][1] == theBoard['5'][1] == theBoard['6'][1] == 0: # only cemented markers
+  # Check middle row (positions 4, 5, 6)
+  elif theBoard['4'][0] == theBoard['5'][0] == theBoard['6'][0] != ' ':
+      if theBoard['4'][1] == theBoard['5'][1] == theBoard['6'][1] == 0:
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
@@ -294,8 +399,9 @@ def check_win(theBoard, turn):
           print()
           return True
 
-  elif theBoard['1'][0] == theBoard['2'][0] == theBoard['3'][0] != ' ': # across the bottom
-      if theBoard['1'][1] == theBoard['2'][1] == theBoard['3'][1] == 0: # only cemented markers
+  # Check bottom row (positions 1, 2, 3)
+  elif theBoard['1'][0] == theBoard['2'][0] == theBoard['3'][0] != ' ':
+      if theBoard['1'][1] == theBoard['2'][1] == theBoard['3'][1] == 0:
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
@@ -304,8 +410,9 @@ def check_win(theBoard, turn):
           print()
           return True
 
-  elif theBoard['1'][0] == theBoard['4'][0] == theBoard['7'][0] != ' ': # down the left side
-      if theBoard['1'][1] == theBoard['4'][1] == theBoard['7'][1] == 0: # only cemented markers
+  # Check left column (positions 1, 4, 7)
+  elif theBoard['1'][0] == theBoard['4'][0] == theBoard['7'][0] != ' ':
+      if theBoard['1'][1] == theBoard['4'][1] == theBoard['7'][1] == 0:
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
@@ -314,8 +421,9 @@ def check_win(theBoard, turn):
           print()
           return True
 
-  elif theBoard['2'][0] == theBoard['5'][0] == theBoard['8'][0] != ' ': # down the middle
-      if theBoard['2'][1] == theBoard['5'][1] == theBoard['8'][1] == 0: # only cemented markers
+  # Check middle column (positions 2, 5, 8)
+  elif theBoard['2'][0] == theBoard['5'][0] == theBoard['8'][0] != ' ':
+      if theBoard['2'][1] == theBoard['5'][1] == theBoard['8'][1] == 0:
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
@@ -324,8 +432,9 @@ def check_win(theBoard, turn):
           print()
           return True
 
-  elif theBoard['3'][0] == theBoard['6'][0] == theBoard['9'][0] != ' ': # down the right side
-      if theBoard['3'][1] == theBoard['6'][1] == theBoard['9'][1] == 0: # only cemented markers
+  # Check right column (positions 3, 6, 9)
+  elif theBoard['3'][0] == theBoard['6'][0] == theBoard['9'][0] != ' ':
+      if theBoard['3'][1] == theBoard['6'][1] == theBoard['9'][1] == 0:
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
@@ -334,8 +443,9 @@ def check_win(theBoard, turn):
           print()
           return True
 
-  elif theBoard['7'][0] == theBoard['5'][0] == theBoard['3'][0] != ' ': # diagonal
-      if theBoard['7'][1] == theBoard['5'][1] == theBoard['3'][1] == 0: # only cemented markers
+  # Check diagonal top-left to bottom-right (positions 7, 5, 3)
+  elif theBoard['7'][0] == theBoard['5'][0] == theBoard['3'][0] != ' ':
+      if theBoard['7'][1] == theBoard['5'][1] == theBoard['3'][1] == 0:
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
@@ -344,8 +454,9 @@ def check_win(theBoard, turn):
           print()
           return True
 
-  elif theBoard['1'][0] == theBoard['5'][0] == theBoard['9'][0] != ' ': # diagonal
-      if theBoard['1'][1] == theBoard['5'][1] == theBoard['9'][1] == 0: # only cemented markers
+  # Check diagonal top-right to bottom-left (positions 1, 5, 9)
+  elif theBoard['1'][0] == theBoard['5'][0] == theBoard['9'][0] != ' ':
+      if theBoard['1'][1] == theBoard['5'][1] == theBoard['9'][1] == 0:
           printBoard(theBoard)
           print("\nGame Over.\n")                
           print(" **** ", end='')
@@ -353,108 +464,123 @@ def check_win(theBoard, turn):
           print(" won ****")
           print()
           return True
-
-#Implementation of Two Player Tic-Tac-Toe game in Python.
-# start game function
-# Now we'll write the main function which has all the gameplay functionality.
-
-
-def game():
-
-    turn = 'X'
-    count = 0
-    win = False
-    x_collapse = 1
-    y_collapse = 1
-
-    # initialise quantum circuit with 9 qubits (all on OFF = 0)
-    circuit = qiskit.QuantumCircuit(9, 9)
-
-    while (not win):
-
-        # ============================= ROUND START ============================ 
-        global theBoard
-        printBoard(theBoard)
-
-        print()
-        print("It's your turn " + turn + ". Do you want to make a (1) classical move, (2) quantum move, (3) collapse?, or (4) quit?")
-
-        move = input()
-
-        # ============================= CLASSIC MOVE ===========================
-
-        if int(move) == 1:
-            theBoard, turn, count, circuit = make_classic_move(theBoard, turn, count, circuit)
-            madeMove = True
-
-        # ============================= QUANTUM MOVE ===========================
-
-        elif int(move) == 2 and count > 8:
-          # cant do a quantum move if there's only 1 empty square left
-          print()
-          print("There aren't enough empty spaces for that!")
-
-        elif int(move) == 2 and count < 8:
-          theBoard, count, circuit, turn = make_quantum_move(theBoard, count, circuit, turn)
-          madeMove = True
-        
-        # ============================= COLLAPSE/MEASURE =======================
-
-        elif int(move) == 3:
-
-          if (turn == 'X' and x_collapse== 1 ):
-            circuit, string, theBoard, count = measure(circuit, theBoard, count)
-            x_collapse = 0
-          elif (turn == 'O' and y_collapse == 1):
-            circuit, string, theBoard, count = measure(circuit, theBoard, count)
-            y_collapse = 0
-          else:
-            print("You have already used your collapse this game!")
-
-        # ============================= QUIT ===================================
-
-        elif int(move) == 4:
-            break
-        
-        # ============================= CHECK FOR WIN ==========================
-
-        # Now we will check if player X or O has won,for every move  
-        if count >= 5:
-          win = check_win(theBoard, turn)
-          if (win):
-            break
-
-
-
-        # If neither X nor O wins and the board is full, we'll declare the result as 'tie'.
-        if count == 9:
-          circuit, string, theBoard, count = measure(circuit, theBoard, count)
-          win = check_win(theBoard, turn)
-          if count == 9:
-            print("\nGame Over.\n")                
-            print("It's a Tie !")
-            print()
-            win = True
           
+  # If we get here, nobody won yet
+  return False
 
+# 🎮 MAIN GAME FUNCTION - Where all the magic happens!
+def game():
+  """
+  The main game loop - this is where players take turns and quantum chaos unfolds!
+  
+  Think of this as the "game engine" that keeps everything running smoothly.
+  It handles player turns, move validation, win checking, and all that good stuff.
+  """
 
-        # Now we have to change the player after every move.
-        if  (madeMove):  
-          madeMove = False
-          if turn =='X':
-              turn = 'O'
-          else:
-              turn = 'X'        
+  turn = 'X'  # X always goes first (classic tic-tac-toe rules)
+  count = 0   # How many pieces are on the board
+  win = False # Has someone won yet?
+  x_collapse = 1  # X player can collapse once per game (special power!)
+  y_collapse = 1  # O player can collapse once per game (special power!)
+
+  # 🔬 Create our quantum circuit with 9 qubits (one for each board position)
+  # and 9 classical bits (to store measurement results)
+  # This is like setting up a 9-qubit quantum computer in software
+  from qiskit import QuantumCircuit
+  circuit = QuantumCircuit(9, 9)
+
+  # 🔄 Main game loop - keep playing until someone wins
+  while (not win):
+
+    # ============================= ROUND START ============================= 
+    global theBoard  # Use the global board variable
+    printBoard(theBoard)  # Show current board state
+
+    print()
+    print("It's your turn " + turn + ". Do you want to make a (1) classical move, (2) quantum move, (3) collapse?, or (4) quit?")
+
+    move = input()  # Get player's choice
+
+    # ============================= CLASSIC MOVE ===========================
+    if int(move) == 1:
+        # Make a boring normal move (like your grandparents' tic-tac-toe)
+        theBoard, turn, count, circuit = make_classic_move(theBoard, turn, count, circuit)
+        madeMove = True
+
+    # ============================= QUANTUM MOVE ===========================
+    elif int(move) == 2 and count > 8:
+      # Can't do quantum move if board is too full (need 2 empty spots)
+      print()
+      print("There aren't enough empty spaces for that!")
+
+    elif int(move) == 2 and count < 8:
+      # Make a quantum move (place piece in superposition across 2 spots)
+      theBoard, count, circuit, turn = make_quantum_move(theBoard, count, circuit, turn)
+      madeMove = True
     
+    # ============================= COLLAPSE/MEASURE =======================
+    elif int(move) == 3:
+      # Use your special power to collapse all quantum pieces!
+      # Each player can only do this once per game
+      
+      if (turn == 'X' and x_collapse== 1 ):
+        # X player uses their collapse power
+        circuit, string, theBoard, count = measure(circuit, theBoard, count)
+        x_collapse = 0  # X can't collapse again
+      elif (turn == 'O' and y_collapse == 1):
+        # O player uses their collapse power  
+        circuit, string, theBoard, count = measure(circuit, theBoard, count)
+        y_collapse = 0  # O can't collapse again
+      else:
+        print("You have already used your collapse this game!")  # No more collapses for you!
 
-    # Now we will ask if player wants to restart the game or not.
-    restart = input("Play Again?(y/n) ")
-    if restart == "y" or restart == "Y":
+    # ============================= QUIT ===================================
+    elif int(move) == 4:
+        break  # Rage quit 😤
+    
+    # ============================= CHECK FOR WIN ==========================
+    # Only check for wins after there are at least 5 pieces on board
+    # (mathematically impossible to win with fewer pieces)
+    if count >= 5:
+      win = check_win(theBoard, turn)
+      if (win):
+        break  # Someone won! End the game
 
-        theBoard = resetBoard()
-        game()
+    # ============================= BOARD FULL CHECK ====================
+    # If board is completely full, force a collapse and check for winner
+    if count == 9:
+      circuit, string, theBoard, count = measure(circuit, theBoard, count)
+      win = check_win(theBoard, turn)
+      if count == 9:  # If still full after collapse, it's a tie
+        print("\nGame Over.\n")                
+        print("It's a Tie !")
+        print()
+        win = True
+
+    # ============================= SWITCH PLAYERS ======================
+    # Alternate between X and O after each valid move
+    if (madeMove):  
+      madeMove = False
+      if turn =='X':
+          turn = 'O'  # X's turn is over, now it's O's turn
+      else:
+          turn = 'X'  # O's turn is over, now it's X's turn
+    
+  # ============================= GAME OVER ============================
+  # Ask if they want to play again (because this game is addictive)
+  restart = input("Play Again?(y/n) ")
+  if restart == "y" or restart == "Y":
+      theBoard = resetBoard()  # Fresh board
+      game()  # Start a new game (recursive call)
 
 def start_menu():
+    """
+    🎯 The main menu - like the lobby of your favorite game
+    
+    This is what players see when they first start the game.
+    Simple menu with options to start playing, learn how to play, or quit.
+    """
+    
     start_menu = """
     Start Menu:
 
@@ -463,18 +589,22 @@ def start_menu():
     3. Quit
     """ 
     
+    # 🎨 ASCII art title because we're fancy like that
     print("""
     ###########################
     ### Quantum Tic-Tac-Toe ###
     ###########################
     """)
     print(start_menu)
+    
     choice = 0
+    # Keep asking until they pick option 1 (Start Game)
     while (choice != '1'):
       print("What would you like to do? ", end='')
       choice = input()
 
       if (choice == '2'):
+        # Show the tutorial/instructions
         How_To = """ 
         In Quantum Tic-Tac-Toe, each square starts empty and your goal is to create a line of three of your naughts/crosses. 
         Playing a classical move will result in setting a square permanently as your piece.
@@ -485,15 +615,17 @@ def start_menu():
         print(How_To)
 
       if (choice == '3'):
-        print("Goodbye")
+        print("Goodbye")  # Peace out ✌️
         break
       
     return choice
 
-#Reset the board at start
+# 🚀 GAME INITIALIZATION - This is where everything starts!
+
+# Reset the board at start (create a fresh, empty board)
 theBoard = resetBoard()
 
-#Set no moves made yet
+# 🎮 Start the game if player chooses option 1
 if (start_menu() == '1'):  
-  madeMove = False
-  game()
+  madeMove = False  # Track if a move was made this turn
+  game()  # LET THE QUANTUM CHAOS BEGIN! 🌀
